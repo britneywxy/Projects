@@ -6,6 +6,8 @@
   I use the amplitude level of the sound to change the rotation degree. So the rotation of the star seems more consistent with the song.
   
   I also use the color because I think color will make the visualization have a sense of rhythm with the song
+  
+  You can also see the work from: https://editor.p5js.org/Britneyw/full/pqtINz_pJ
 
 */
 
