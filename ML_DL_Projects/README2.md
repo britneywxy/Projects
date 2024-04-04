@@ -12,10 +12,6 @@ This repository is a comprehensive showcase of my work in the machine learning s
 - **pytorch_nn.py**: Validate the practical use of PyTorch in constructing and training neural networks, emphasizing ease of use and efficiency.
 - **self_implement_nn.py**: Build a neural network from the ground up, demonstrating a fundamental understanding of neural network mechanics and underlying mathematical principles.
 
-### Author
-
-**Britney Wang** - As the sole author of this project, I have undertaken a comprehensive exploration of machine learning techniques, from the development of algorithms to the processing and analysis of large datasets. My work not only emphasizes the technical aspects of machine learning but also its application to real-world problems.
-
 ### Dataset Sizes and Distributed Computing Experience
 
 The datasets employed in these projects vary greatly in size, from smaller datasets processed locally to larger ones necessitating distributed computing. Notably, the `Million Song Dataset`, which is approximately 300GB in size, stands out for its volume. To efficiently process and analyze this substantial dataset, Amazon EMR (Elastic MapReduce) was leveraged, demonstrating my capability to utilize cloud-based distributed computing platforms effectively. This approach not only facilitated the handling of large-scale data but also underscored the versatility and scalability of the computational strategies employed in my machine learning projects.
