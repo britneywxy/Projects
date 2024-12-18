@@ -1,6 +1,13 @@
+**Project Repositories**
 
+Machine Learning & Deep Learning Projects
+- A collection of advanced modeling projects exploring various ML and DL techniques, algorithms, and applications.
 
-<!---
-britneywxy/britneywxy is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.
-You can click the Preview link to take a look at your changes.
---->
+R Programming Projects
+- Data science projects utilizing R, focusing on:
+ Exploratory Data Analysis (EDA)
+Feature Selection Techniques
+Machine Learning Model Development
+
+Computer Science & AI Projects
+- Technical projects implemented in Python and Java, targeting artificial intelligence applications and computational solutions.
