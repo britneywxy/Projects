@@ -2,7 +2,6 @@
    will build a trie, according to trienode.  It will also run
    an interactive session where the user can retrieve words using
    t9 sequences.
-   CSE374, HW5, 22wi
    Xiyi Wang
 */
 
