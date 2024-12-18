@@ -1,0 +1,193 @@
+---
+title: "Project1"
+author: "Xiyi Wang"
+date: '2023-09-24'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE}
+suppressMessages(library(tidyverse)) 
+library(tidyr)
+```
+
+## Overview of Dataset
+
+```{r load_data, echo=FALSE}
+df <- read.csv("bird-diversity.csv",stringsAsFactors=FALSE)
+```
+
+Basic information of the data:
+
+```{r basic information, echo=FALSE}
+sprintf("Number of rows: %d", nrow(df))
+sprintf("Number of columns: %d", ncol(df))
+```
+
+Summary information of the data:
+
+```{r}
+str(df)
+summary(df)
+```
+
+Given the information above, we can observe that that the dimension of this dataset is (387,9). Within the 9 variables, there are 5 numeric variables (`Heterozygosity`, `Allelic.richness`, `Breeding.range.size`, `Body.mass`, `Latitude`) and 4 categorical variables (`Species`, `Family`, `Migratory.status`, `References`).
+
+Next we are trying to process/clean the dataset before we do further analysis.
+
+## Process the dataset
+
+### Find missing values, outliers, skewed variables
+
+```{r missing values}
+sum(is.na(df))
+```
+
+Firstly, there is no missing value in this dataset.
+
+Second, remember we have 4 categorical variables. For `Species`, `Family` and `Reference`, since they do not have a natural order or numerical meaning, it's better to remove them. And the remaining categorical variable (`Migratory.status`), since it is ordinal (a species can either be Resident or Migratory), it should be factorized.
+
+By doing so, our new dataset will only have 6 variables.
+
+```{r remove_uninformative cols}
+df <- subset(df, select = -c(Species, Family, References))
+df$Migratory.status <- factor(df$Migratory.status)
+head(df)
+```
+
+Then we can plot the histogram of each variable to see if there exists some outliers and if some variables have special properties.
+
+```{r histograms, echo=FALSE}
+df.new <- df %>%
+  dplyr::select(.,-Migratory.status) %>%
+  gather(.)
+
+ggplot(data=df.new,mapping=aes(x=value)) +
+  geom_histogram(color='blue',fill='grey',bins=25) +
+  facet_wrap(~key,scales="free")
+```
+
+By looking at the histograms, we may notice that the plots of both `Body.mass` and `Breeding.range.size` are right-skewed. Therefore, we may want to see the histogram of the base-10 logarithm of these two variables. If they look more symmetric, then we may want to replace them with the log-base scale.
+
+```{r, echo=FALSE}
+library(palmerpenguins)
+par(mfrow = c(1,2))
+hist(log10(df$Body.mass),main="Hist of Body Mass",xlim=c(0,5)) 
+hist(log10(df$Breeding.range.size),main="Hist of Breeding Range Size",xlim=c(-5,6)) 
+```
+
+```{r convert to log}
+df$Body.mass = log10(df$Body.mass)
+df$Breeding.range.size = log10(df$Breeding.range.size)
+```
+
+Then, from the histograms of `Heterozygosity`, `Latitude` and `Breeding.range.size`, we can notice there are some data are separated from the majority of the data. For instance, there exists some data when the value of `Heterozygosity` is less than 0.25 or when the value of `Latitude` is greater than 70 or when `Breeding.range.size` \> 20. We may further identify these data from box plots.
+
+```{r, echo=FALSE}
+library(ggpubr)
+theme_set(theme_pubr())
+
+dot_H <- ggplot(data=df, mapping=aes(x="", y=Heterozygosity)) + geom_boxplot()
+dot_L <- ggplot(data=df, mapping=aes(x="", y=Latitude)) + geom_boxplot()
+dot_Ar <- ggplot(data=df, mapping=aes(x="", y=Allelic.richness)) + geom_boxplot()
+
+figure <- ggarrange(dot_H, dot_L,dot_Ar, 
+                    ncol = 3, nrow = 1)
+figure 
+
+```
+
+Based on the boxplots, it's evident that the isolated data points are visually represented as outliers or distinct data points. However, their proximity to the mean suggests that they are not significantly distant from the central distribution of the other data points. This occurrence can be attributed to the limited size of the dataset, which may have resulted in some missing data for specific values. Consequently, these missing values have led to the appearance of separated data points. Therefore I would not delete these points from the origin dataset.
+
+## Visualizations for quantitative variables
+
+#### Scatter plots
+
+Next, if we treat `Heterozygosity` as our response variable, we may be interested in the relationships of our response variable and other predictors variables. First we can draw some insights from the scatter plots, where the y-axis is the response variable, while the x-axis represents each predictor variable.
+
+```{r scatter plot, echo=FALSE}
+df.new <- df %>% 
+  dplyr::select(.,-Heterozygosity, -Migratory.status) %>% 
+  gather(.) # remove response
+
+num.var <- df %>% 
+  dplyr::select(.,-Heterozygosity, -Migratory.status) %>% 
+  ncol(.) 
+
+ggplot(data=df.new,mapping=aes(x=value,y=rep(df$Heterozygosity,num.var))) +
+  geom_point(size=0.1,col="#4b2e83") +
+facet_wrap(~key,scales='free_x') + # not `free` since all y-axes should have same range
+  xlab("Value") +
+  ylab("Heterozygosity")
+```
+
+From these plots, we may notice there is probably a positive relationship between `Heterozygosity` and `Allelic.richness`. But for other variables, we cannot clearly identify their correlation. Thus we can apply a correlation plot for further analysis.
+
+#### Correlation Plot
+
+```{r corr plot, echo=FALSE}
+suppressMessages(library(corrplot))
+library(tidyverse)
+df %>%
+  dplyr::select(.,'Heterozygosity','Allelic.richness','Breeding.range.size','Body.mass','Latitude') %>%
+  cor(.) %>%
+  corrplot(.,method="ellipse",type='upper')
+```
+
+The correlation plot shows that the correlation between `Heterozygosity` and `Allelic.richness` is close to 1, which verify our observation from the scatter plot. We may also notice that `Body.mass` has a negative correlation with the response. But `Breeding.range` and `Latitude` have poor relationship with the response.
+
+## Visualizations for categorical variable
+
+In our data, we also have a factorized categorical variable `Migratory.status` which only has two levels -- "Migratory" or "Resident". We can find the relationships between this categorical variable and the response by visualizing the plots.
+
+#### Bar Chart
+
+First, take a look how many data are "Migratory" and how many are "Resident".
+
+```{r bar charts for factor variable, echo=FALSE}
+df.new <- df %>%
+  dplyr::select(.,Migratory.status) %>%
+  gather(.)
+
+ggplot(data=df.new,mapping=aes(x=value)) +
+  geom_bar(color="lightblue",fill="lightblue") +
+  facet_wrap(~key,scales='free')
+```
+
+We may notice that the number of "Migratory" data and the number of "Resident" data are pretty close.
+
+#### Faceted Histograms for the Response Based on Factor Levels
+
+```{r, echo=FALSE}
+ggplot(data=df,mapping=aes(x=Heterozygosity)) + # insert response here 
+  geom_histogram(color="blue",fill="yellow",bins=25) + 
+  facet_wrap(~Migratory.status,scales='free_y') # insert categorical variable here
+```
+
+#### Faceted Violin Plots of Response versus Categorical Predictors
+
+```{r, echo=FALSE}
+df.new  <- df %>% 
+  dplyr::select(.,Migratory.status) %>% 
+  gather(.)
+
+num.var <- df %>% 
+  dplyr::select(.,Migratory.status) %>% 
+  ncol(.)
+
+ggplot(data=df.new,mapping=aes(x=value,y=rep(df$Heterozygosity,num.var))) +
+  geom_violin(fill="lightblue") +
+  geom_boxplot(col="sienna", width=0.1) +
+  facet_wrap(~key,scale='free_x') +
+  xlab("Value") +
+  ylab("Heterozygosity")
+```
+
+From the violin plots, we may notice that their box plots are almost the same, but have different probability density plot. That suggests that:
+
+1.  For different levels of `Migratory.status`, `Heterozygosity` have similar basic statistics (such as mean, median, and possibly standard deviation). This means that the average level of Heterozygosity does not differ much between the two groups.
+
+2.  The difference in the density plots indicates that while the basic statistics are similar, there may be differences in the distribution shapes or patterns of `Heterozygosity` within each group.

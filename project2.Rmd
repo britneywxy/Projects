@@ -1,0 +1,242 @@
+---
+title: "Project2"
+author: "Xiyi Wang"
+date: "2023-10-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE}
+suppressMessages(library(tidyverse)) 
+library(tidyr)
+```
+
+### Load the dataset
+
+```{r load_data}
+df <- read.csv("flightDelay2.csv",stringsAsFactors=FALSE)
+```
+
+### EDA
+
+Basic information of the data:
+
+```{r basic_information, echo=FALSE}
+sprintf("Number of rows: %d", nrow(df))
+sprintf("Number of columns: %d", ncol(df))
+```
+
+```{r}
+summary(df)
+```
+
+From the summary we can discover that the last column `X` has only NA values. Also, the column `YEAR` and `MONTH` only have one value (`YEAR` is only equal to 2016 while `MONTH` only has the value of 12)
+
+Thus we delete these columns first.
+
+After that, we delete all the rows that have any missing data.
+
+```{r remove_missing}
+df <- subset(df, select = -c(X,YEAR,MONTH))
+w <- complete.cases(df)
+sprintf("Number of rows that has missing data: %d", nrow(df)-nrow(df[w,]))
+df <- df[w,]
+sprintf("Current number of rows in the dataset: %d", nrow(df))
+```
+
+```{r}
+summary(df)
+```
+
+From this new summary we can discover that after we have deleted the rows with missing data, the columns `CANCELLED` and `DIVERTED` only have 0 values. Thus we may also want to delete these two variables from our data set.
+
+Thus the list of all the removed variables = {"X", "YEAR", "MONTH", "CANCELLED", "DIVERTED"}
+
+```{r}
+df <- subset(df, select = -c(CANCELLED,DIVERTED))
+```
+
+#### Take out the Response variable
+
+```{r}
+response <- df$ARR_DELAY
+df <- subset(df, select = -c(ARR_DELAY))
+```
+
+#### Faceted Histograms
+
+Then we can plot the histogram of each remaining variable to see if some variables have special properties.
+
+```{r histograms, echo=FALSE}
+df.new <- df %>%
+  gather(.)
+
+ggplot(data=df.new,mapping=aes(x=value)) +
+  geom_histogram(color='blue',fill='grey',bins=25) +
+  facet_wrap(~key,scales="free")
+```
+
+From the histogram, we can see all the DELAY-related variables, `TAXI_IN`, `TAXI_OUT`, are highly right-skewed. But we may noticed that `DEP_DELAY` has negative values, thus for this specific variable, we cannot transform it to log-scale, or it may cause NA values. Instead, we can transform it with cube-root. This transformation is weaker than the logarithm, but it is also used for reducing right skewness, and has the advantage that it can be applied to zero and negative values. We can first take a look at the histogram of the variables after cube-root transformation.
+
+```{r}
+df.new <- df %>%
+  dplyr::select(c("CARRIER_DELAY", "DEP_DELAY", "LATE_AIRCRAFT_DELAY", 
+                  "WEATHER_DELAY", "NAS_DELAY", "SECURITY_DELAY", 
+                  "TAXI_IN", "TAXI_OUT"),) %>%
+  gather(.)
+
+ggplot(data=df.new,mapping=aes(x=sign(value) * (abs(value)^(1/3)))) +
+  geom_histogram(color='antiquewhite4',fill='antiquewhite4',bins=30) +
+  ggtitle("Histogram of transformmed variables") +
+  xlab("Cube-Root Transformed variables") + 
+  facet_wrap(~key,scales="free")
+```
+
+When examing these histograms, we can notice that most of these variables do not appear more normal after transformation. In other words, cube-root might be the best approach here. Thus I decide not to transform any of the predictor variables.
+
+#### Correlation Plot
+
+```{r}
+suppressMessages(library(corrplot))
+library(tidyverse)
+df %>%
+  cor(.) %>%
+  corrplot(.,tl.srt=45, tl.cex = 0.5, method="ellipse",type='upper')
+```
+
+### Linear Regression
+
+#### Split data into training and test sets.
+
+For this dataset, 70% of the data is randomly sampled to form the training set, while the remaining 30% constitutes the test set.
+
+```{r}
+set.seed(123)
+s <- sample(nrow(df),round(0.7*nrow(df)))
+df.train <- df[s,]
+df.test <- df[-s,]
+
+resp.train <- response[s]
+resp.test <- response[-s]
+```
+
+#### Fit into linear regression
+
+```{r}
+lm.out <- lm(resp.train~.,data=df.train)
+summary(lm.out)
+resp.pred <- predict(lm.out,newdata=df.test)
+MSE_full <- mean((resp.test - resp.pred)^2)
+sprintf("MSE: %f", MSE_full)
+```
+
+From the summary, we have a large Adjusted R-squared which is 0.9856, showing that this linear model fits well to the data. And we would observe that the p-value is much less than the threshold of 0.05, proving that there exists a significant association between the predictors and the response variable.
+
+However, we may see a large MSE, that might because MSE is heavily dependent on the scale of the response variable. And here the response variable ranges from -52 to 1189, thus an MSE of around 40 can be considered relatively small in comparison to the scale of this response variable.
+
+We can also make a histogram of the fit residuals, $Y_i - \hat{Y}_i$, for the test-set data.
+
+```{r}
+res <- resp.pred - resp.test
+ggplot(data = data.frame(res), aes(x=res)) + 
+  geom_histogram(bins=25, fill="grey", color="black") + 
+  labs(title = "Histogram of Residuals", x = "Residuals", y = "Frequency")
+```
+
+Based on the histogram, we may discover that the residuals is nearly normally distributed with mean 0. Thus we don't have to transform the response with log-scale.
+
+We then can create a diagnostic plot showing the predicted response ($y$-axis) versus the observed response ($x$-axis) to see how well the model fits.
+
+```{r}
+df.plot <- data.frame("x"=resp.test,"y"=resp.pred)
+ggplot(df.plot, aes(x, y)) + 
+  geom_point() +
+  geom_abline(slope = 1,col="red") 
+```
+
+From the plot, we can observe that most of the data points are scattered along the diagonal red line which represents the line y=x, especially in the lower range. This indicates that for many data points, the model's predictions are very close to the actual values. Besides that, there are a few points that deviate from the red line, especially in the middle to higher range of the x-axis. Those points represent instances where the model's predictions were not as accurate. In general, the model has a generally linear relationship with the actual values and is performing well for a majority of predictions.
+
+#### Multicollinearity
+
+##### Computation of variance-inflation factors
+
+```{r}
+suppressMessages(library(car))
+vif(lm.out)
+```
+
+Based on these vif values, we can discover that variables like `DEP_TIME`, `DEP_DELAY`, `WHEELS_OFF`, `ACTUAL_ELAPSED_TIME`, `DISTANCE` all have very large value (greater than 20), and variables like `WHEELS_ON`, `ARR_TIME`, `CARRIER_DELAY` and `LATE_AIRCRAFT_DELAY` have relative large vif value (greater than 10 but less than 20). That means this data does have the multicollinearity issue. And the variables with vif greater than 20 could be the potentially problematic variables.
+
+### Best-subset-selection
+
+```{r}
+suppressMessages(library(bestglm))
+df.train.new <- data.frame(df.train,"y"=resp.train)
+bg.out.bic <- bestglm(df.train.new,family=gaussian,IC="BIC")
+bg.out.aic <- bestglm(df.train.new,family=gaussian,IC="AIC")
+bg.out.bic$BestModel
+bg.out.aic$BestModel
+```
+
+For BIC, there are 12 predictor variables retained in the best model, while with AIC, there are 13 predictors retained.
+
+```{r}
+resp.pred.bg.bic <- predict(bg.out.bic$BestModel,newdata=df.test)
+resp.pred.bg.aic <- predict(bg.out.aic$BestModel,newdata=df.test)
+MSE_bg_bic <- mean((resp.test - resp.pred.bg.bic)^2)
+MSE_bg_aic <- mean((resp.test - resp.pred.bg.aic)^2)
+sprintf("MSE for full dataset: %f", MSE_full)
+sprintf("MSE for Best Model with BIC: %f", MSE_bg_bic)
+sprintf("MSE for Best Model with AIC: %f", MSE_bg_aic)
+```
+
+We can observe that there is no much difference between the MSE's for different models. But Best model with BIC does give a smaller MSE compared to the other two.
+
+### PCA Analysis
+
+```{r}
+pca.out <- prcomp(df,scale=TRUE) #scaling
+pr.var=pca.out$sdev^2
+pve <- pr.var/sum(pca.out$sdev ^2)
+
+pve_df <- data.frame(x=1:length(pve),y=pve)
+round(cumsum(pr.var/sum(pr.var)),3)
+cpve <- data.frame(x=1:length(cumsum(pve)),y=cumsum(pve))
+
+ggplot(data=pve_df,mapping=aes(x=x, y=y)) +
+       geom_line(col='blue') + geom_point(col='blue') +
+       xlab(" Principal Component ") + ylab("PVE")
+
+ggplot(data=cpve,mapping=aes(x=x, y=y)) +
+       geom_line(col='brown3') + geom_point(col='brown3') +
+       xlab(" Principal Component ") + ylab("CPVE")
+```
+
+I would retain 10 PCs since from the scree plot, since from the cumulative sums of the explained variance, we can see PC10 already explained 95% of the variance.
+
+Then we can print out the relative weighting of the contribution of each original variable to the PC1 to PC10.
+
+```{r}
+round(pca.out$rotation[,1:10],3)
+```
+
+```{r}
+df.pca <- data.frame(pca.out$x[,1:10])
+df.pca.train <- df.pca[s,]
+df.pca.test <- df.pca[-s,]
+
+lm.out.pca <- lm(resp.train~.,data=df.pca.train)
+#summary(lm.out)
+resp.pred.pca <- predict(lm.out.pca,newdata=df.pca.test)
+MSE_pca <- mean((resp.test - resp.pred.pca)^2)
+
+sprintf("MSE for full dataset: %f", MSE_full)
+sprintf("MSE for Best Model with BIC: %f", MSE_bg_bic)
+sprintf("MSE for Best Model with AIC: %f", MSE_bg_aic)
+sprintf("MSE after PCA: %f", MSE_pca)
+```
+
+We can discover that the MSE after we conducting PCA is the largest, but since we scale the data before we apply PCA, i.e. we are using a different data frame in PCA, we can not directly compare the numerical results of MSE. The performance of PCA really depends on the scaling of data, and the number of PC's that we selected. Here the large MSE of PCA cannot indicate that the dimensionality reduction might have resulted in the loss of important information, instead, we need further analysis and comparisons.

@@ -1,0 +1,292 @@
+---
+title: "project3"
+author: "Xiyi Wang"
+date: "2023-11-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE}
+suppressMessages(library(tidyverse))
+library(tidyr)
+```
+
+## Load the data
+
+```{r load_data}
+df <- read.csv("kepler2.csv",stringsAsFactors=TRUE)
+```
+
+### EDA
+
+Basic information of the data:
+
+```{r echo=FALSE}
+sprintf("Number of rows: %d", nrow(df))
+sprintf("Number of columns: %d", ncol(df))
+sprintf("Number of missing values: %d", sum(is.na(df)))
+```
+
+```{r}
+summary(df)
+```
+
+From the summary of the data, we can observe that our response variable `label` has a imbalanced class. Thus for the following prediction, it's better to find the optimal threshold via ROC and Youden's J statistic.
+
+#### Take out the Response variable
+
+```{r}
+response <- df$label
+df <- subset(df, select = -c(label))
+```
+
+#### Faceted Histograms
+
+Then we can plot the histogram of each remaining variable to see if some variables have special properties.
+
+```{r histograms, echo=FALSE}
+df.new <- df %>%
+  gather(.)
+
+ggplot(data=df.new,mapping=aes(x=value)) +
+  geom_histogram(color='blue',fill='grey',bins=25) +
+  facet_wrap(~key,scales="free")
+```
+
+From these histograms we may observe that some variables are highly skewed. However, we are doing binary classification here, the skew in the feature data is less of a concern than the balance between the classes. So I decided not to transform any of the variables.
+
+## Prediction
+
+#### Split data into training and test sets.
+
+For this dataset, 70% of the data is randomly sampled to form the training set, while the remaining 30% constitutes the test set.
+
+```{r}
+set.seed(123)
+s <- sample(nrow(df),round(0.7*nrow(df)))
+df.train <- df[s,]
+df.test <- df[-s,]
+
+resp.train <- response[s]
+resp.test <- response[-s]
+```
+
+### Logistic regression
+
+Apply ROC curve to find the optimal threshold and calculate the AUC.
+
+```{r}
+log.out = suppressWarnings(glm(resp.train~.,data=df.train,family=binomial))
+resp.prob = predict(log.out,newdata=df.test,type="response")
+
+suppressMessages(library(pROC))
+(roc.log = roc(resp.test,resp.prob))
+auc.log = roc.log$auc
+cat("AUC for logistic regression: ",round(auc.log,3),"\n")
+
+J = roc.log$sensitivities + roc.log$specificities - 1
+w = which.max(J)
+threshold.log = roc.log$thresholds[w]
+cat("Optimum threshold for logistic regression: ",round(threshold.log,3),"\n")
+```
+
+Make predictions based on the optimal threshold and calculate the misclassification rate.
+
+```{r}
+resp.pred = factor(ifelse(resp.prob>threshold.log,"FALSE POSITIVE","CONFIRMED")) 
+table(resp.pred,resp.test)
+log.mcr = round(mean(resp.pred!=resp.test),3)
+sprintf("Misclassification rate of Logistic regression is: %g", log.mcr)
+```
+
+### Decision Tree
+
+```{r}
+suppressMessages(library(rpart))
+rpart.out = rpart(resp.train~.,data=df.train)
+```
+
+Plot the decision tree and check whether pruning would be useful.
+
+```{r}
+#Plot the decision tree
+library(rpart.plot)
+rpart.plot(rpart.out,extra=104)
+plotcp(rpart.out)
+```
+
+Based on the **`plotcp`** output, we can observe that the error does not significantly change with different cp values after a certain point, indicating that pruning might not lead to a substantial improvement in the model's performance. So we can just use the original tree.
+
+Thus we can make predictions from the original tree.
+
+```{r}
+#resp.pred.tree = predict(rpart.out,newdata=df.test,type="class")
+resp.prob.tree <- predict(rpart.out,newdata=df.test,type="prob")[,2]
+
+roc.tree = roc(resp.test,resp.prob.tree)
+J = roc.tree$sensitivities + roc.tree$specificities - 1
+w = which.max(J)
+threshold.tree = roc.tree$thresholds[w]
+cat("Optimum threshold for decision tree: ",round(threshold.tree,3),"\n")
+
+resp.pred = factor(ifelse(resp.prob.tree>threshold.tree,"FALSE POSITIVE","CONFIRMED")) 
+table(resp.pred,resp.test)
+mcr.tree = mean(resp.pred!=resp.test)
+sprintf("Misclassification rate of Decision Tree is: %g", round(mcr.tree,3))
+
+auc.tree = roc.tree$auc
+cat("AUC for decision tree: ",round(auc.tree,3),"\n")
+```
+
+### Random Forest
+
+```{r}
+suppressMessages(library(randomForest))
+rf.out = randomForest(resp.train~.,data=df.train,importance=TRUE)
+resp.prob.rf = predict(rf.out,newdata=df.test,type="prob")[,2]
+roc.rf = roc(resp.test,resp.prob.rf)
+auc.rf = roc.rf$auc
+
+J = roc.rf$sensitivities + roc.rf$specificities - 1
+w = which.max(J)
+threshold.rf = roc.rf$thresholds[w]
+
+class_predictions = ifelse(resp.prob.rf > threshold.rf, "FALSE POSITIVE","CONFIRMED")
+(conf_matrix.rf = table(resp.test, class_predictions))
+mcr.rf = mean(class_predictions!=resp.test)
+
+cat("Optimum threshold for Random forest: ",round(threshold.rf,3),"\n")
+cat("AUC for Random forest: ",round(auc.rf,3),"\n")
+sprintf("Misclassification rate of Logistic regression is: %g", mcr.rf)
+```
+
+### K-Nearest Neighbors
+
+```{r}
+library(FNN)
+k.max = 30
+mcr.k = rep(NA,k.max)
+for ( kk in 1:k.max ) {
+  knn.out = knn.cv(train=df.train,cl=resp.train,k=kk,algorithm="brute")
+  mcr.k[kk] = mean(knn.out !=resp.train)
+}
+k.min = which.min(mcr.k)
+cat("The optimal number of nearest neighbors is ",k.min,"\n")
+
+ggplot(data=data.frame("k"=1:k.max,"mcr"=mcr.k),mapping=aes(x=k,y=mcr)) + 
+  geom_point() + geom_line() +
+  xlab("Number of Nearest Neighbors k") + ylab("Validation MCR") + 
+  geom_vline(xintercept=k.min,color="red")
+```
+
+Based on the optimal number of k, build a new model and make predictions.
+
+```{r}
+knn.pred = knn.cv(train = df.test, cl = resp.test, k = k.min)
+(conf_matrix.knn = table(resp.test, knn.pred))
+mcr.knn = mean(knn.pred!=resp.test)
+sprintf("Misclassification rate of KNN is: %g", mcr.knn)
+
+## Roc Curve
+roc.knn = roc(resp.test,as.numeric(knn.pred))
+auc.knn = roc.knn$auc
+cat("AUC for KNN: ",round(auc.knn,3),"\n")
+```
+
+### SVM
+
+```{r}
+library(e1071)
+set.seed(123)
+pred.train <- cbind(df.train,resp.train)
+tune.out = tune(svm,resp.train~.,data=pred.train,kernel="linear",ranges=list(cost=10^seq(-2,2,by=0.2)))
+cat("The estimated optimal value for C is ",as.numeric(tune.out$best.parameters),"\n")
+resp.pred.svm = predict(tune.out$best.model,newdata=df.test)
+
+(conf_matrix.svm = table(resp.pred.svm,resp.test))
+mcr.svm = mean(resp.pred.svm!=resp.test) 
+sprintf("Misclassification rate of SVM is: %g", mcr.svm)
+
+## Roc Curve
+roc.svm = roc(resp.test,as.numeric(resp.pred.svm))
+auc.svm = roc.svm$auc
+cat("AUC for SVM: ",round(auc.svm,3),"\n")
+```
+
+### XGBoost
+
+In XGBoost, we have to convert our response variable "Confirmed" and "Positive negative" to 0 and 1.
+
+```{r}
+suppressMessages(library(xgboost))
+resp.train <- ifelse(resp.train == "CONFIRMED", 0, 1)
+resp.test <- ifelse(resp.test == "CONFIRMED", 0, 1)
+```
+
+```{r}
+train = xgb.DMatrix(data=as.matrix(df.train),label=resp.train)
+test  = xgb.DMatrix(data=as.matrix(df.test),label=resp.test)
+set.seed(123)
+
+xgb.cv.out = xgb.cv(params=list(objective="binary:logistic"),train,nrounds=30,nfold=5,eval_metric="error",verbose=0)
+
+cat("The optimal number of trees is ",which.min(xgb.cv.out$evaluation_log$test_error_mean),"\n")
+
+xgb.out = xgboost(train,nrounds=which.min(xgb.cv.out$evaluation_log$test_error_mean),
+                  params=list(objective="binary:logistic"),verbose=0, eval_metric="error")
+```
+
+Then we also need to apply ROC curve and Youden's J statistic to determine the threshold and calculate the misclassification rate.
+
+```{r}
+resp.prob.xgb = predict(xgb.out, newdata=test, type="prob")
+roc.xgb = roc(resp.test,resp.prob.xgb)
+auc.xgb = roc.xgb$auc
+cat("AUC for XGBoost: ",round(auc.xgb,3),"\n")
+
+J = roc.xgb$sensitivities + roc.xgb$specificities - 1
+w = which.max(J)
+threshold.xgb = roc.xgb$thresholds[w]
+cat("Optimum threshold for XGBoost: ",round(threshold.xgb,3),"\n")
+
+class_predictions = ifelse(resp.prob.xgb > threshold.xgb, "1","0")
+(conf_matrix.xgb = table(resp.test, class_predictions))
+mcr.xgb = mean(class_predictions!=resp.test) 
+sprintf("Misclassification rate of XGBoost is: %g", mcr.xgb)
+```
+
+## Summary
+
+```{r}
+model_names <- c("Log Regression","Decision Tree","Random Forest","KNN","SVM","XGBoost")
+auc_values <- c(auc.log,auc.tree,auc.rf,auc.knn,auc.svm,auc.xgb)
+mcr_values <- c(log.mcr,mcr.tree,mcr.rf,mcr.knn,mcr.svm,mcr.xgb)
+results_df <- data.frame(Model = model_names, AUC = round(auc_values,3), MCR = round(mcr_values,3))
+
+# Display the results
+#print(results_df)
+head(results_df)
+```
+
+From the summary, we can notice that Random Forest and XGBoost have the highest AUC scores of 0.966 and 0.965, respectively, suggesting that they are performing very well in distinguishing between the classes. Their MCR values are also the lowest among all models, with Random Forest at 0.102 and XGBoost at 0.093, indicating a high rate of correct classifications. Below will display the confusion matrix again for both of these two models.
+
+```{r}
+cat("Optimum threshold for Random forest: ",round(threshold.rf,3),"\n")
+conf_matrix.rf
+
+cat("\n", "Optimum threshold for XGBoost: ",round(threshold.xgb,3),"\n")
+conf_matrix.xgb
+```
+
+```{r}
+plot(roc.log,col="lightcoral",xlim=c(1,0),ylim=c(0,1),main="ROC Curves Comparison")
+lines(roc.tree, col="antiquewhite4")
+lines(roc.rf,col="skyblue3")
+lines(roc.knn,col="seagreen2")
+lines(roc.svm,col="khaki2")
+lines(roc.xgb,col="plum4")
+legend("bottomright", legend=c("Logistic Regression","Decision Tree","Random Forest", "KNN", "SVM", "XGBoost"),col=c("lightcoral","antiquewhite4","skyblue3","seagreen2","khaki2", "plum4"),lty=1)
+```
